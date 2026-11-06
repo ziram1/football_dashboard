@@ -1094,19 +1094,85 @@ with tab_team:
             poss_with_shot = int(team_history["nb_poss_with_shot"].sum())
             poss_final_third = int(team_history["nb_poss_final_third"].sum())
 
-            s1, s2, s3, s4 = st.columns(4)
+            s1, s2, s3 = st.columns(3)
             with s1:
                 indicator_bar("⏱️ Durée moyenne d'une possession", "duree_possession", ".1f",
                               "Durée moyenne d'une séquence de possession, en secondes.")
             with s2:
-                indicator_bar("Pourcentage moyen de possession", "possession_pct", ".1f",
-                              "Part moyenne du temps de jeu pendant laquelle l'équipe conserve le ballon.")
-            with s3:
                 indicator_bar("🥅 % possessions avec tir", "poss_tir_pct", ".1f",
                               f"{poss_with_shot} possessions contenant un tir sur {total_poss_all} possessions.")
-            with s4:
+            with s3:
                 indicator_bar("🚩 % possessions atteignant le dernier tiers", "poss_dernier_tiers_pct", ".1f",
                               f"{poss_final_third} possessions atteignant le dernier tiers sur {total_poss_all} possessions.")
+
+            # Évolution de la possession match par match (remplace l'ancien indicateur "% moyen de possession")
+            st.write("### 📈 Évolution de la possession match par match")
+            evo = (
+                team_history[["match_id", "match_week", "possession_pct", "buts", "buts_enc"]]
+                .sort_values("match_week")
+                .copy()
+            )
+            opponents = (
+                df_team[df_team["match_id"].isin(evo["match_id"]) & (df_team["team"] != team_selected)]
+                [["match_id", "team"]]
+                .drop_duplicates("match_id")
+                .rename(columns={"team": "Adversaire"})
+            )
+            evo = evo.merge(opponents, on="match_id", how="left")
+            evo["Adversaire"] = evo["Adversaire"].fillna("—")
+            evo["Résultat"] = np.select(
+                [evo["buts"] > evo["buts_enc"], evo["buts"] == evo["buts_enc"]],
+                ["Victoire", "Nul"], default="Défaite",
+            )
+            evo["Score"] = evo["buts"].astype(int).astype(str) + " - " + evo["buts_enc"].astype(int).astype(str)
+
+            y_lo = max(0.0, float(evo["possession_pct"].min()) - 5)
+            y_hi = min(100.0, float(evo["possession_pct"].max()) + 5)
+            y_scale_evo = alt.Scale(domain=[y_lo, y_hi])
+            x_evo = alt.X("match_week:Q", title="Journée", axis=alt.Axis(tickMinStep=1, format="d"))
+
+            evo_line = (
+                alt.Chart(evo).mark_line(color="#f43f5e", strokeWidth=2.5)
+                .encode(x=x_evo, y=alt.Y("possession_pct:Q", title="Possession (%)", scale=y_scale_evo))
+            )
+            evo_points = (
+                alt.Chart(evo).mark_circle(size=130, opacity=1)
+                .encode(
+                    x=x_evo,
+                    y=alt.Y("possession_pct:Q", scale=y_scale_evo),
+                    color=alt.Color(
+                        "Résultat:N",
+                        scale=alt.Scale(domain=["Victoire", "Nul", "Défaite"],
+                                        range=["#10b981", "#94a3b8", "#ef4444"]),
+                        legend=alt.Legend(orient="bottom", title=None),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("match_week:Q", title="Journée", format="d"),
+                        alt.Tooltip("Adversaire:N", title="Adversaire"),
+                        alt.Tooltip("Score:N", title="Score"),
+                        alt.Tooltip("possession_pct:Q", title="Possession (%)", format=".1f"),
+                    ],
+                )
+            )
+            team_poss_mean = float(evo["possession_pct"].mean())
+            mean_rule = (
+                alt.Chart(pd.DataFrame({"y": [team_poss_mean]}))
+                .mark_rule(strokeDash=[6, 4], color="#e2e8f0", strokeWidth=2)
+                .encode(y=alt.Y("y:Q", scale=y_scale_evo))
+            )
+            mean_label = (
+                alt.Chart(pd.DataFrame({"y": [team_poss_mean],
+                                        "t": [f"Moyenne {team_selected} : {team_poss_mean:.1f} %"]}))
+                .mark_text(align="left", dx=6, dy=-8, color="#e2e8f0", fontWeight="bold", fontSize=11)
+                .encode(x=alt.value(5), y=alt.Y("y:Q", scale=y_scale_evo), text="t:N")
+            )
+            st.altair_chart((mean_rule + mean_label + evo_line + evo_points).properties(height=360),
+                            use_container_width=True)
+            st.caption(
+                f"Possession de {team_selected} à chaque journée jouée (journées 1 à {max_history_week}). "
+                "La couleur du point indique le résultat du match. "
+                f"La ligne en tirets blancs est la moyenne de possession de l'équipe sur la période ({team_poss_mean:.1f} %)."
+            )
 
             st.write("### 🔻 Zones de pertes de balle")
             col_loss, col_loss_info = st.columns(2)
